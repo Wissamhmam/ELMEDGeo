@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, MapPin, Ruler, User, FileText, CheckCircle2, AlertTriangle, ShieldCheck, ArrowLeft, XCircle, RotateCcw, Building2, Menu, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import MapComponent from './components/MapComponent';
@@ -60,7 +60,7 @@ function App() {
   useEffect(() => {
     const fetchEmprise = async () => {
       try {
-        const response = await fetch('http://localhost:3000/emprise');
+        const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/emprise`);
         if (response.ok) {
           const result = await response.json();
           setEmpriseData(result);
@@ -82,7 +82,7 @@ function App() {
     setData(null);
 
     try {
-      const response = await fetch(`http://localhost:3000/api/parcel/${searchTerm}?region=${selectedRegion}`);
+      const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/parcel/${searchTerm}?region=${selectedRegion}`);
       if (!response.ok) {
         if (response.status === 404) throw new Error('Parcelle non trouvée. Vérifiez le numéro de titre foncier.');
         throw new Error('Erreur lors de la recherche.');

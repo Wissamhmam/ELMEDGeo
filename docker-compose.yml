@@ -5,9 +5,9 @@ services:
     image: postgis/postgis:17-3.5
     container_name: geo-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "123456"
-      POSTGRES_DB: geo_project
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database:/docker-entrypoint-initdb.d
@@ -16,20 +16,24 @@ services:
   backend:
     build: ./backend
     container_name: geo-backend
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
-      DB_USER: postgres
+      DB_USER: ${POSTGRES_USER}
       DB_HOST: db
-      DB_NAME: geo_project
-      DB_PASSWORD: "123456"
-      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_PORT: ${DB_PORT:-5432}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
     depends_on:
       - db
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""
     container_name: geo-frontend
     ports:
       - "8080:80"

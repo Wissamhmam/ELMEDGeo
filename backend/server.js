@@ -1,10 +1,40 @@
 const express = require("express");
 const cors = require("cors");
+const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 
 const app = express();
-app.use(cors());
+
+// CORS - restrict to known origins
+const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:8080")
+  .split(",")
+  .map((o) => o.trim());
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (e.g. curl, mobile apps, same-origin)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+  })
+);
+
 app.use(express.json());
+
+// Rate limiting
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Trop de requêtes, veuillez réessayer plus tard." },
+});
+
+app.use(apiLimiter);
 
 // PostgreSQL connection
 const pool = new Pool({
@@ -15,12 +45,24 @@ const pool = new Pool({
   port: parseInt(process.env.DB_PORT) || 5432,
 });
 
+// Input validation helper for parcel IDs
+function isValidParcelId(id) {
+  // Allow alphanumeric, hyphens, underscores, dots - max 50 chars
+  return /^[a-zA-Z0-9\-_.]{1,50}$/.test(id);
+}
+
 app.get("/", (req, res) => {
   res.send("API is running");
 });
 
 app.get("/api/parcel/:id", async (req, res) => {
   const parcelId = req.params.id;
+
+  // Validate parcelId
+  if (!isValidParcelId(parcelId)) {
+    return res.status(400).json({ message: "Format de titre foncier invalide. Caractères autorisés: lettres, chiffres, tirets, underscores, points. Maximum 50 caractères." });
+  }
+
   const region = req.query.region; // Get region from query parameters
   
   // Choose the column based on region
