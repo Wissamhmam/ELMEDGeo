@@ -5,6 +5,11 @@ const { Pool } = require("pg");
 
 const app = express();
 
+// Fail fast rather than silently connecting with a known default password.
+if (!process.env.DB_PASSWORD) {
+  throw new Error("DB_PASSWORD must be set before starting the API.");
+}
+
 // CORS - restrict to known origins
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:8080")
   .split(",")
@@ -13,7 +18,6 @@ const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:8080")
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (e.g. curl, mobile apps, same-origin)
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
@@ -27,8 +31,8 @@ app.use(express.json());
 
 // Rate limiting
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Trop de requêtes, veuillez réessayer plus tard." },
@@ -41,13 +45,12 @@ const pool = new Pool({
   user: process.env.DB_USER || "postgres",
   host: process.env.DB_HOST || "localhost",
   database: process.env.DB_NAME || "geo_project",
-  password: process.env.DB_PASSWORD || "123456",
-  port: parseInt(process.env.DB_PORT) || 5432,
+  password: process.env.DB_PASSWORD,
+  port: Number.parseInt(process.env.DB_PORT || "5432", 10),
 });
 
 // Input validation helper for parcel IDs
 function isValidParcelId(id) {
-  // Allow alphanumeric, hyphens, underscores, dots - max 50 chars
   return /^[a-zA-Z0-9\-_.]{1,50}$/.test(id);
 }
 
@@ -58,23 +61,16 @@ app.get("/", (req, res) => {
 app.get("/api/parcel/:id", async (req, res) => {
   const parcelId = req.params.id;
 
-  // Validate parcelId
   if (!isValidParcelId(parcelId)) {
     return res.status(400).json({ message: "Format de titre foncier invalide. Caractères autorisés: lettres, chiffres, tirets, underscores, points. Maximum 50 caractères." });
   }
 
-  const region = req.query.region; // Get region from query parameters
-  
-  // Choose the column based on region
-  // Default to titre_s2_t (Tunis) if not specified or unknown
+  const region = req.query.region;
   const searchColumn = region === "nabeul" ? "titre_n" : "titre_s2_t";
 
   try {
-    // 1. Get parcel details from placess table
     const parcelResult = await pool.query(`
-      SELECT 
-        *,
-        ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geometry
+      SELECT *, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geometry
       FROM placess
       WHERE ${searchColumn}::text = $1
       LIMIT 1
@@ -86,12 +82,8 @@ app.get("/api/parcel/:id", async (req, res) => {
 
     const parcel = parcelResult.rows[0];
 
-    // 2. Check if any line intersects this parcel
     const lineResult = await pool.query(`
-      SELECT 
-        l.ogc_fid,
-        l.layer,
-        ST_AsGeoJSON(ST_Transform(l.geom, 4326)) AS geometry
+      SELECT l.ogc_fid, l.layer, ST_AsGeoJSON(ST_Transform(l.geom, 4326)) AS geometry
       FROM liness l, placess p
       WHERE p.id = $1 AND ST_Intersects(p.geom, l.geom)
     `, [parcel.id]);
@@ -102,14 +94,10 @@ app.get("/api/parcel/:id", async (req, res) => {
       geometry: JSON.parse(row.geometry)
     }));
 
-    // Intersection details are already part of the placess row
     const intersectionData = (parcel.long_int_m !== null && parcel.long_int_m !== undefined) ? parcel : null;
 
     res.json({
-      parcel: {
-        ...parcel,
-        geometry: JSON.parse(parcel.geometry)
-      },
+      parcel: { ...parcel, geometry: JSON.parse(parcel.geometry) },
       intersectingLines: lines,
       isAffected: lines.length > 0,
       intersectionInfo: intersectionData ? {
@@ -124,34 +112,21 @@ app.get("/api/parcel/:id", async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("Server running on port 3000");
-});
-
-//----------------------------------------------
 app.get("/titre_fonciere", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
-        id,
-        nom as text,
-        ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geometry
+      SELECT id, nom as text, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geometry
       FROM placess
     `);
 
-    const geojson = {
+    res.json({
       type: "FeatureCollection",
       features: result.rows.map(row => ({
         type: "Feature",
-        properties: {
-          id: row.id,
-          name: row.text,
-        },
+        properties: { id: row.id, name: row.text },
         geometry: JSON.parse(row.geometry),
       })),
-    };
-
-    res.json(geojson);
+    });
   } catch (err) {
     console.error(err);
     res.status(500).send("Error fetching titre_fonciere from placess");
@@ -161,26 +136,18 @@ app.get("/titre_fonciere", async (req, res) => {
 app.get("/lines", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
-        ogc_fid,
-        layer,
-        ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geometry
+      SELECT ogc_fid, layer, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geometry
       FROM liness
     `);
 
-    const geojson = {
+    res.json({
       type: "FeatureCollection",
       features: result.rows.map(row => ({
         type: "Feature",
-        properties: {
-          id: row.ogc_fid,
-          type: row.layer,
-        },
+        properties: { id: row.ogc_fid, type: row.layer },
         geometry: JSON.parse(row.geometry),
       })),
-    };
-
-    res.json(geojson);
+    });
   } catch (err) {
     res.status(500).send("Error fetching lines");
   }
@@ -189,28 +156,25 @@ app.get("/lines", async (req, res) => {
 app.get("/emprise", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
-        ogc_fid,
-        layer,
-        ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geometry
+      SELECT ogc_fid, layer, ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geometry
       FROM emprises
     `);
 
-    const geojson = {
+    res.json({
       type: "FeatureCollection",
       features: result.rows.map(row => ({
         type: "Feature",
-        properties: {
-          id: row.ogc_fid,
-          layer: row.layer,
-        },
+        properties: { id: row.ogc_fid, layer: row.layer },
         geometry: JSON.parse(row.geometry),
       })),
-    };
-
-    res.json(geojson);
+    });
   } catch (err) {
     console.error("Error fetching emprise:", err);
     res.status(500).send("Error fetching emprise");
   }
+});
+
+const port = Number.parseInt(process.env.PORT || "3000", 10);
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
 });
